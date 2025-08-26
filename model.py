@@ -1,8 +1,12 @@
 from torch.utils.data import DataLoader
-import matplotlib.pyplot as plt
 import cv2 as cv
 import numpy as np
 import pathlib
+import torch
+import torchvision
+from torchvision.transforms import functional as F
+from torchvision.models.detection import FasterRCNN_ResNet50_FPN_Weights
+
 
 
 class openCVPipeline:
@@ -79,5 +83,70 @@ class openCVPipeline:
           cv.rectangle(img, (roi[0], roi[1]), (roi[2], roi[3]), (0,255,0), 2)
 
           # self.display_image(img)
+          cropped_img = img[roi[1]:roi[3], roi[0]:roi[2]]
 
           self.saveROI(img, i)
+          self.saveROI(cropped_img, f"{i}_cropped")
+
+
+class FasterRCNNPipeline:
+    def __init__(self, output_dir, dataset, threshold=0.6,
+                 device="cuda" if torch.cuda.is_available() else "cpu"):
+        self.output_dir = pathlib.Path(output_dir)
+        self.output_dir.mkdir(exist_ok=True)
+        self.dataset = dataset
+        self.threshold = threshold
+        self.device = device
+
+        # Load pretrained Faster R-CNN
+        self.model = torchvision.models.detection.fasterrcnn_resnet50_fpn(weights=FasterRCNN_ResNet50_FPN_Weights.DEFAULT)
+        self.model.eval()
+        self.model.to(self.device)
+
+    def preprocess(self, image):
+        """Convert BGR numpy image to tensor on device"""
+        tensor = torch.from_numpy(image).to(self.device)
+        tensor = F.convert_image_dtype(tensor)
+        tensor = tensor.permute(2, 0, 1).unsqueeze(0)
+        return tensor
+
+    def predict(self, tensor):
+        """Run Faster R-CNN and return filtered boxes, scores, labels"""
+        with torch.no_grad():
+            outputs = self.model(tensor)
+
+        boxes = outputs[0]["boxes"].cpu().numpy()
+        scores = outputs[0]["scores"].cpu().numpy()
+        labels = outputs[0]["labels"].cpu().numpy()
+
+        return boxes[0], scores[0], labels[0]
+
+    def draw_and_crop(self, image, boxes, scores, index):
+        """Draw boxes and save both full image + cropped ROIs"""
+        img_out = image.copy()
+        for j, (box, score) in enumerate(zip([boxes], [scores])):
+            x1, y1, x2, y2 = box.astype(int)
+            cv.rectangle(img_out, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv.putText(img_out, f"{score:.2f}", (x1, y1 - 5),
+                        cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+
+            # Save cropped ROI
+            roi = image[y1:y2, x1:x2]
+            cv.imwrite(str(self.output_dir / f"roi_{index}_{j}.png"), roi)
+
+        # Save annotated full image
+        cv.imwrite(str(self.output_dir / f"annotated_{index}.png"), img_out)
+
+    def run(self):
+        dataloader = DataLoader(self.dataset, batch_size=1,
+                                shuffle=False, num_workers=0)
+
+        for i, sample in enumerate(dataloader):
+            print(i, sample.size())
+
+            img = sample[0].cpu().numpy().astype("uint8")  # [H,W,3] BGR
+            tensor = self.preprocess(img)
+            boxes, scores, labels = self.predict(tensor)
+
+            if len(boxes) > 0:
+                self.draw_and_crop(img, boxes, scores, i)
