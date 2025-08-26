@@ -90,6 +90,7 @@ The Faster R-CNN pipeline leverages a pre-trained deep learning model for object
 ### Key Components
 
 #### `preprocess(self, image)`
+- Blur image for better edge detection
 - Converts BGR numpy image to PyTorch tensor
 - Normalizes pixel values to [0,1] range
 - Rearranges dimensions from HWC to CHW format

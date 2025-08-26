@@ -105,7 +105,8 @@ class FasterRCNNPipeline:
 
     def preprocess(self, image):
         """Convert BGR numpy image to tensor on device"""
-        tensor = torch.from_numpy(image).to(self.device)
+        img_blur = cv.medianBlur(src=image, ksize=7)
+        tensor = torch.from_numpy(img_blur).to(self.device)
         tensor = F.convert_image_dtype(tensor)
         tensor = tensor.permute(2, 0, 1).unsqueeze(0)
         return tensor
@@ -142,11 +143,16 @@ class FasterRCNNPipeline:
                                 shuffle=False, num_workers=0)
 
         for i, sample in enumerate(dataloader):
-            print(i, sample.size())
+            try:
+              print(i, sample.size())
 
-            img = sample[0].cpu().numpy().astype("uint8")  # [H,W,3] BGR
-            tensor = self.preprocess(img)
-            boxes, scores, labels = self.predict(tensor)
+              img = sample[0].cpu().numpy().astype("uint8")  # [H,W,3] BGR
+              tensor = self.preprocess(img)
+              boxes, scores, labels = self.predict(tensor)
+            
+            except Exception as e:
+              print(f"Error predicting image {i} ROI: {e}")
+              continue
 
             if len(boxes) > 0:
                 self.draw_and_crop(img, boxes, scores, i)
